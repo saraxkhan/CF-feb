@@ -14,11 +14,11 @@ app = Flask(__name__)
 
 
 # Secret key for signing certificates (in production, use environment variable)
-SECRET_KEY = os.environ.get('CERT_SECRET_KEY', 'change-this-in-production-use-env-var')
+SECRET_KEY = os.environ.get('CERT_SECRET_KEY', 'udemy-123')
 
 # Base URL for verification - CHANGE THIS TO YOUR DEPLOYED URL!
 # For testing locally: use ngrok or similar tunneling service
-BASE_URL = os.environ.get('BASE_URL', 'http://localhost:5001')
+BASE_URL = os.environ.get('BASE_URL', 'https://certifyfast.onrender.com')
 
 # Use /tmp for ephemeral storage (works on Render free tier)
 BASE_DIR   = "/tmp/certifyfast"
