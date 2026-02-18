@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+
+# App data (stored on Render disk, not in git)
+uploads/
+output/
+signatures/
+certificates.db
+
+# OS
+.DS_Store
+*.log

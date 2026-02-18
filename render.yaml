@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: certifyfast
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app -c gunicorn.conf.py
+    envVars:
+      - key: CERT_SECRET_KEY
+        generateValue: true
+      - key: BASE_URL
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.0
