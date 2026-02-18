@@ -442,6 +442,9 @@ tr:last-child td{border-bottom:none}
 }
 @keyframes spin{to{transform:rotate(360deg)}}
 .overlay p{color:var(--ink2);font-size:14px}
+.progress-wrap{width:260px;background:var(--border);border-radius:20px;height:8px;margin-top:14px;overflow:hidden;display:none}
+.progress-bar{height:100%;width:0%;background:var(--gold);border-radius:20px;transition:width .3s ease}
+.progress-label{font-size:12px;color:var(--ink3);margin-top:8px;display:none}
 
 .toast{
   position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
@@ -651,6 +654,10 @@ tr:last-child td{border-bottom:none}
 <div class="overlay" id="overlay">
   <div class="spinner"></div>
   <p id="overlayMsg">Analyzing…</p>
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar" id="progressBar"></div>
+  </div>
+  <div class="progress-label" id="progressLabel"></div>
 </div>
 
 <!-- TOAST -->
@@ -829,31 +836,78 @@ function render(d){
 /* ── GENERATE ── */
 gBtn.addEventListener('click',async()=>{
   if(!sid){toast_('Please analyze files first.','err');return}
-  showOvl('Generating certificates… This may take a moment.');
+  showOvl('Starting certificate generation…');
   gBtn.disabled=true;
+
+  const progressWrap=document.getElementById('progressWrap');
+  const progressBar=document.getElementById('progressBar');
+  const progressLabel=document.getElementById('progressLabel');
+  progressWrap.style.display='block';
+  progressLabel.style.display='block';
+  progressBar.style.width='0%';
+  progressLabel.textContent='Preparing…';
+
   try{
     const fd=new FormData();
     fd.append('session_id',sid);
     fd.append('qr_position',qrPos.value);
     fd.append('sig_position',sigPos.value);
-    
+
     const r=await fetch('/api/generate',{method:'POST',body:fd});
-    if(!r.ok){
-      let em='Failed to generate certificates. Server may have timed out — try with fewer rows first.';
-      try{const j=await r.json();em=j.error||em;}catch(_){
-        try{const t=await r.text();if(t&&t.trim().length>0&&t.length<400)em=t;}catch(__){}}
-      throw new Error(em);
+    if(!r.ok||!r.body){
+      throw new Error('Server error — could not start generation. Check your files and try again.');
     }
-    const blob=await r.blob();
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download='certificates.zip';
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(a.href);
-    toast_('✓ Certificates generated! Download started.','ok');
-  }catch(e){toast_(e.message,'err')}
-  finally{hideOvl();gBtn.disabled=false}
+
+    const reader=r.body.getReader();
+    const decoder=new TextDecoder();
+    let buf='';
+
+    while(true){
+      const {done,value}=await reader.read();
+      if(done) break;
+      buf+=decoder.decode(value,{stream:true});
+      const lines=buf.split('\n');
+      buf=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: ')) continue;
+        let evt;
+        try{evt=JSON.parse(line.slice(6));}catch(_){continue;}
+        if(evt.type==='start'){
+          overlayMsg.textContent=`Generating ${evt.total} certificate${evt.total!==1?'s':''}…`;
+        } else if(evt.type==='progress'){
+          const pct=Math.round((evt.done/evt.total)*100);
+          progressBar.style.width=pct+'%';
+          progressLabel.textContent=`${evt.done} / ${evt.total} · ${evt.success} ok · ${evt.errors} failed`;
+          overlayMsg.textContent=`Generating… ${pct}%`;
+        } else if(evt.type==='done'){
+          progressBar.style.width='100%';
+          const bin=atob(evt.zip_b64);
+          const arr=new Uint8Array(bin.length);
+          for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+          const blob=new Blob([arr],{type:'application/zip'});
+          const a=document.createElement('a');
+          a.href=URL.createObjectURL(blob);
+          a.download='certificates.zip';
+          document.body.appendChild(a);a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(a.href);
+          const warn=evt.errors&&evt.errors.length>0?` (${evt.errors.length} failed)`:'';
+          toast_(`✓ ${evt.success} certificates downloaded!${warn}`,'ok');
+          hideOvl();gBtn.disabled=false;
+          return;
+        } else if(evt.type==='error'){
+          throw new Error(evt.message||'Unknown server error');
+        }
+      }
+    }
+  }catch(e){
+    toast_(e.message||'Generation failed. Please try again.','err');
+  }finally{
+    progressWrap.style.display='none';
+    progressLabel.style.display='none';
+    hideOvl();
+    gBtn.disabled=false;
+  }
 });
 
 /* ── RESET ── */
@@ -873,4 +927,5 @@ rBtn.addEventListener('click',()=>{
 </script>
 </body>
 </html>
+
 
