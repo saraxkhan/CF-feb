@@ -84,3 +84,4 @@ def get_certificate(cert_id):
             'created_at': row[7]
         }
     return None
+
