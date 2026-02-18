@@ -836,7 +836,7 @@ function render(d){
 /* ── GENERATE ── */
 gBtn.addEventListener('click',async()=>{
   if(!sid){toast_('Please analyze files first.','err');return}
-  showOvl('Starting certificate generation…');
+  showOvl('Starting generation…');
   gBtn.disabled=true;
 
   const progressWrap=document.getElementById('progressWrap');
@@ -844,69 +844,84 @@ gBtn.addEventListener('click',async()=>{
   const progressLabel=document.getElementById('progressLabel');
   progressWrap.style.display='block';
   progressLabel.style.display='block';
-  progressBar.style.width='0%';
-  progressLabel.textContent='Preparing…';
+  progressBar.style.width='2%';
+  progressLabel.textContent='Queuing job…';
+
+  let evtSource=null;
+
+  function cleanup(){
+    if(evtSource){evtSource.close();evtSource=null;}
+    progressWrap.style.display='none';
+    progressLabel.style.display='none';
+    hideOvl();
+    gBtn.disabled=false;
+  }
 
   try{
+    // Step 1: POST to kick off background job
     const fd=new FormData();
     fd.append('session_id',sid);
     fd.append('qr_position',qrPos.value);
     fd.append('sig_position',sigPos.value);
 
     const r=await fetch('/api/generate',{method:'POST',body:fd});
-    if(!r.ok||!r.body){
-      throw new Error('Server error — could not start generation. Check your files and try again.');
+    let rJson;
+    try{ rJson=await r.json(); }catch(_){ rJson={}; }
+    if(!r.ok){
+      throw new Error(rJson.error||`Server error (${r.status}). Please try again.`);
     }
+    const jobId=rJson.job_id;
+    if(!jobId) throw new Error('Server did not return a job ID. Please try again.');
 
-    const reader=r.body.getReader();
-    const decoder=new TextDecoder();
-    let buf='';
+    overlayMsg.textContent='Generating certificates…';
 
-    while(true){
-      const {done,value}=await reader.read();
-      if(done) break;
-      buf+=decoder.decode(value,{stream:true});
-      const lines=buf.split('\n');
-      buf=lines.pop();
-      for(const line of lines){
-        if(!line.startsWith('data: ')) continue;
-        let evt;
-        try{evt=JSON.parse(line.slice(6));}catch(_){continue;}
-        if(evt.type==='start'){
-          overlayMsg.textContent=`Generating ${evt.total} certificate${evt.total!==1?'s':''}…`;
-        } else if(evt.type==='progress'){
-          const pct=Math.round((evt.done/evt.total)*100);
-          progressBar.style.width=pct+'%';
-          progressLabel.textContent=`${evt.done} / ${evt.total} · ${evt.success} ok · ${evt.errors} failed`;
-          overlayMsg.textContent=`Generating… ${pct}%`;
-        } else if(evt.type==='done'){
-          progressBar.style.width='100%';
-          const bin=atob(evt.zip_b64);
-          const arr=new Uint8Array(bin.length);
-          for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
-          const blob=new Blob([arr],{type:'application/zip'});
-          const a=document.createElement('a');
-          a.href=URL.createObjectURL(blob);
-          a.download='certificates.zip';
-          document.body.appendChild(a);a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(a.href);
-          const warn=evt.errors&&evt.errors.length>0?` (${evt.errors.length} failed)`:'';
-          toast_(`✓ ${evt.success} certificates downloaded!${warn}`,'ok');
-          hideOvl();gBtn.disabled=false;
-          return;
-        } else if(evt.type==='error'){
-          throw new Error(evt.message||'Unknown server error');
-        }
+    // Step 2: Listen to SSE progress stream
+    evtSource=new EventSource(`/api/job/${jobId}`);
+
+    evtSource.onmessage=function(e){
+      let evt;
+      try{evt=JSON.parse(e.data);}catch(_){return;}
+
+      if(evt.type==='progress'){
+        const total=evt.total||1;
+        const pct=total>0?Math.round((evt.done/total)*100):0;
+        progressBar.style.width=Math.max(pct,2)+'%';
+        progressLabel.textContent=evt.done+' / '+total+' · '+evt.success+' ok · '+evt.errors+' failed';
+        overlayMsg.textContent='Generating… '+pct+'%';
+
+      }else if(evt.type==='done'){
+        progressBar.style.width='100%';
+        progressLabel.textContent='✓ '+evt.success+' certificates ready!';
+        // Decode base64 ZIP and trigger download
+        const bin=atob(evt.zip_b64);
+        const arr=new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+        const blob=new Blob([arr],{type:'application/zip'});
+        const a=document.createElement('a');
+        a.href=URL.createObjectURL(blob);
+        a.download='certificates.zip';
+        document.body.appendChild(a);a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        const warn=evt.errors&&evt.errors.length>0?' ('+evt.errors.length+' failed)':'';
+        toast_('✓ '+evt.success+' certificates downloaded!'+warn,'ok');
+        cleanup();
+
+      }else if(evt.type==='error'){
+        throw new Error(evt.message||'Unknown server error');
       }
-    }
+    };
+
+    evtSource.onerror=function(){
+      evtSource.close();evtSource=null;
+      toast_('Connection lost during generation. If certificates were created, check your downloads.','err');
+      cleanup();
+    };
+
   }catch(e){
+    if(evtSource){evtSource.close();evtSource=null;}
     toast_(e.message||'Generation failed. Please try again.','err');
-  }finally{
-    progressWrap.style.display='none';
-    progressLabel.style.display='none';
-    hideOvl();
-    gBtn.disabled=false;
+    cleanup();
   }
 });
 
@@ -927,5 +942,7 @@ rBtn.addEventListener('click',()=>{
 </script>
 </body>
 </html>
+
+
 
 
